@@ -19,6 +19,7 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <stdbool.h>
 #include "stm32f1xx_hal.h"
 #include "defines.h"
 #include "setup.h"
@@ -65,6 +66,8 @@ extern uint8_t enable; // global variable for motor enable
 
 extern volatile uint32_t timeout; // global variable for timeout
 extern float batteryVoltage; // global variable for battery voltage
+
+bool displayWarning = false;
 
 uint32_t inactivity_timeout_counter;
 uint32_t main_loop_counter;
@@ -330,38 +333,6 @@ int main(void) {
     speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * STEER_COEFFICIENT, -1000, 1000);
 
 
-    #ifdef DEBUG_I2C_LCD // TODO: Move to main_loop_counter % 25
-      LCD_SetLocation(&lcd, 0, 0);
-      // speedR and speedL -1000 to 1000
-      LCD_WriteFloat(&lcd, (double) (speedL/100), 0);
-      LCD_WriteString(&lcd, "/");
-      LCD_WriteFloat(&lcd, (double) (speedR/100), 0);
-
-      float battLow = (float)BAT_LOW_LVL2 * (float)BAT_NUMBER_OF_CELLS;
-      float battPercent = 100.0 * (batteryVoltage - battLow) / (42.0 - battLow);
-      if (battPercent > 100.0)
-        battPercent = 100.0;
-      if (battPercent < 0.0)
-        battPercent = 0.0;
-      if (battPercent < 100.0)
-        LCD_SetLocation(&lcd, 12, 0);
-      else
-        LCD_SetLocation(&lcd, 11, 0);
-      LCD_WaitForBusyFlag(&lcd);
-	  LCD_WriteDATA(&lcd, (uint8_t) 2); // Battery icon
-      LCD_WriteFloat(&lcd, battPercent, 0);
-      LCD_WriteString(&lcd, "%");
-      
-
-      LCD_SetLocation(&lcd, 0, 1);
-      for(uint32_t i = 0; i <= (abs(speed)/62) && abs(speed) > 20; i++) {
-        // Write blocks
-        LCD_WaitForBusyFlag(&lcd);
-	    LCD_WriteDATA(&lcd, (uint8_t) 1);
-      }
-
-    #endif
-
     #ifdef ADDITIONAL_CODE
       ADDITIONAL_CODE;
     #endif
@@ -391,17 +362,77 @@ int main(void) {
       board_temp_deg_c = ((float)TEMP_CAL_HIGH_DEG_C - (float)TEMP_CAL_LOW_DEG_C) / ((float)TEMP_CAL_HIGH_ADC - (float)TEMP_CAL_LOW_ADC) * (board_temp_adc_filtered - (float)TEMP_CAL_LOW_ADC) + (float)TEMP_CAL_LOW_DEG_C;
       
       // ####### DEBUG SERIAL OUT #######
-      #ifdef CONTROL_ADC
-        setScopeChannel(0, (int)adc_buffer.l_tx2);  // 1: ADC1
-        setScopeChannel(1, (int)adc_buffer.l_rx2);  // 2: ADC2
+      #if (defined DEBUG_SERIAL_USART2 || defined DEBUG_SERIAL_USART3)
+          #ifdef CONTROL_ADC
+            setScopeChannel(0, (int)adc_buffer.l_tx2);  // 1: ADC1
+            setScopeChannel(1, (int)adc_buffer.l_rx2);  // 2: ADC2
+          #endif
+          setScopeChannel(2, (int)speedR);  // 3: output speed: 0-1000
+          setScopeChannel(3, (int)speedL);  // 4: output speed: 0-1000
+          setScopeChannel(4, (int)adc_buffer.batt1);  // 5: for battery voltage calibration
+          setScopeChannel(5, (int)(batteryVoltage * 100.0f));  // 6: for verifying battery voltage calibration
+          setScopeChannel(6, (int)board_temp_adc_filtered);  // 7: for board temperature calibration
+          setScopeChannel(7, (int)board_temp_deg_c);  // 8: for verifying board temperature calibration
+          consoleScope();
       #endif
-      setScopeChannel(2, (int)speedR);  // 3: output speed: 0-1000
-      setScopeChannel(3, (int)speedL);  // 4: output speed: 0-1000
-      setScopeChannel(4, (int)adc_buffer.batt1);  // 5: for battery voltage calibration
-      setScopeChannel(5, (int)(batteryVoltage * 100.0f));  // 6: for verifying battery voltage calibration
-      setScopeChannel(6, (int)board_temp_adc_filtered);  // 7: for board temperature calibration
-      setScopeChannel(7, (int)board_temp_deg_c);  // 8: for verifying board temperature calibration
-      consoleScope();
+
+      #ifdef DEBUG_I2C_LCD
+          /* Layout while driving (full):
+           * [L100 R100  b100%]
+           * [████████████████]
+           *
+           */
+
+          if (!displayWarning) {
+              // Clear first row
+              LCD_SetLocation(&lcd, 0, 0);
+              LCD_WriteString(&lcd, "                ");
+
+              // speedR and speedL -1000 to 1000, display as percentage
+              LCD_SetLocation(&lcd, 0, 0);
+              LCD_WriteString(&lcd, "L");
+              LCD_WriteFloat(&lcd, (double) (speedL/10), 0);
+              LCD_SetLocation(&lcd, 5, 0);
+              LCD_WriteString(&lcd, "R");
+              LCD_WriteFloat(&lcd, (double) (speedR/10), 0);
+
+              // Battery percentage
+              float battLow = (float)BAT_LOW_LVL2 * (float)BAT_NUMBER_OF_CELLS;
+              float battPercent = 100.0 * (batteryVoltage - battLow) / ((float)BAT_FULL - battLow);
+              if (battPercent > 100.0)
+                battPercent = 100.0;
+              if (battPercent < 0.0)
+                battPercent = 0.0;
+              if (battPercent < 100.0)
+                LCD_SetLocation(&lcd, 12, 0);
+              else
+                LCD_SetLocation(&lcd, 11, 0);
+
+              LCD_WaitForBusyFlag(&lcd);
+	          LCD_WriteDATA(&lcd, (uint8_t) 2); // Battery icon
+              LCD_WriteFloat(&lcd, battPercent, 0);
+              LCD_WriteString(&lcd, "%");
+              
+
+              LCD_SetLocation(&lcd, 0, 1);
+              uint32_t numBlocks = abs(speed) / 62 + 1;
+              if (abs(speed) <= 20)
+                numBlocks = 0;
+
+              for (uint8_t i = 0; i < numBlocks; i++) { // Write blocks
+                LCD_WriteString(&lcd, "\x01");
+              }
+              for (uint8_t i = numBlocks; i < 16; i++) { // Fill rest with spaces
+                LCD_WriteString(&lcd, " ");
+              }
+          } else {
+              // Low battery warning
+              LCD_SetLocation(&lcd, 0, 0);
+              LCD_WriteString(&lcd, " \x02BATTERY DEAD\x02  ");
+              LCD_SetLocation(&lcd, 0, 1);
+              LCD_WriteString(&lcd, "  CHARGE NOW!!  ");
+          }
+      #endif
     }
 
 
@@ -414,6 +445,7 @@ int main(void) {
 
 
     // ####### BEEP AND EMERGENCY POWEROFF #######
+    displayWarning = false;
     if ((TEMP_POWEROFF_ENABLE && board_temp_deg_c >= TEMP_POWEROFF && abs(speed) < 20) || (batteryVoltage < ((float)BAT_LOW_DEAD * (float)BAT_NUMBER_OF_CELLS) && abs(speed) < 20)) {  // poweroff before mainboard burns OR low bat 3
       poweroff();
     } else if (TEMP_WARNING_ENABLE && board_temp_deg_c >= TEMP_WARNING) {  // beep if mainboard gets hot
@@ -423,15 +455,7 @@ int main(void) {
       buzzerFreq = 5;
       buzzerPattern = 42;
     } else if (batteryVoltage < ((float)BAT_LOW_LVL2 * (float)BAT_NUMBER_OF_CELLS) && batteryVoltage > ((float)BAT_LOW_DEAD * (float)BAT_NUMBER_OF_CELLS)) {  // low bat 2: fast beep
-      #ifdef DEBUG_I2C_LCD
-          // LCD Message
-          LCD_ClearDisplay(&lcd);
-          HAL_Delay(5);
-          LCD_SetLocation(&lcd, 0, 0);
-          LCD_WriteString(&lcd, "  BATTERY DEAD  ");
-          LCD_SetLocation(&lcd, 0, 1);
-          LCD_WriteString(&lcd, "  CHARGE NOW!!  ");
-      #endif
+      displayWarning = true;
       if (BAT_LOW_LVL2_ENABLE) {
         buzzerFreq = 5;
         buzzerPattern = 6;
