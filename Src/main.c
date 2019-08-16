@@ -23,7 +23,7 @@
 #include "defines.h"
 #include "setup.h"
 #include "config.h"
-//#include "hd44780.h"
+#include "hd44780.h"
 
 void SystemClock_Config(void);
 
@@ -32,7 +32,7 @@ extern TIM_HandleTypeDef htim_right;
 extern ADC_HandleTypeDef hadc1;
 extern ADC_HandleTypeDef hadc2;
 extern volatile adc_buf_t adc_buffer;
-//LCD_PCF8574_HandleTypeDef lcd;
+LCD_PCF8574_HandleTypeDef lcd;
 extern I2C_HandleTypeDef hi2c2;
 extern UART_HandleTypeDef huart2;
 
@@ -72,6 +72,8 @@ uint32_t main_loop_counter;
 int32_t motor_test_direction = 1;
 
 extern uint8_t nunchuck_data[6];
+uint32_t nunchuck_bias_x;
+uint32_t nunchuck_bias_y;
 #ifdef CONTROL_PPM
 extern volatile uint16_t ppm_captured_value[PPM_NUM_CHANNELS+1];
 #endif
@@ -153,6 +155,8 @@ int main(void) {
   #ifdef CONTROL_NUNCHUCK
     I2C_Init();
     Nunchuck_Init();
+    nunchuck_bias_x = (NUNCHUCK_MAX_X - NUNCHUCK_MIN_X)/2 + NUNCHUCK_MIN_X - 1;
+    nunchuck_bias_y = (NUNCHUCK_MAX_Y - NUNCHUCK_MIN_Y)/2 + NUNCHUCK_MIN_Y - 1;
   #endif
 
   #ifdef CONTROL_SERIAL_USART2
@@ -163,23 +167,105 @@ int main(void) {
   #ifdef DEBUG_I2C_LCD
     I2C_Init();
     HAL_Delay(50);
-    lcd.pcf8574.PCF_I2C_ADDRESS = 0x27;
+    lcd.pcf8574.PCF_I2C_ADDRESS = 0x20;
       lcd.pcf8574.PCF_I2C_TIMEOUT = 5;
       lcd.pcf8574.i2c = hi2c2;
       lcd.NUMBER_OF_LINES = NUMBER_OF_LINES_2;
       lcd.type = TYPE0;
+
+      uint8_t fullChar[8] = {
+	    0b11111,
+	    0b11111,
+	    0b11111,
+	    0b11111,
+	    0b11111,
+	    0b11111,
+	    0b11111,
+	    0b11111
+      };  
+
+      uint8_t battChar[8] = {
+	    0b01110,
+	    0b11011,
+	    0b10001,
+	    0b11111,
+	    0b11111,
+	    0b11111,
+	    0b11111,
+	    0b11111
+      };    
 
       if(LCD_Init(&lcd)!=LCD_OK){
           // error occured
           //TODO while(1);
       }
 
+    LCD_CustomChar(&lcd, fullChar, 1);
+    LCD_CustomChar(&lcd, battChar, 2);
+
     LCD_ClearDisplay(&lcd);
     HAL_Delay(5);
     LCD_SetLocation(&lcd, 0, 0);
-    LCD_WriteString(&lcd, "Hover V2.0");
+    LCD_WriteString(&lcd, "Kratoffel");
     LCD_SetLocation(&lcd, 0, 1);
+    LCD_WriteString(&lcd, "@blankers.eu");
+    HAL_Delay(1000);
+
+    LCD_ClearDisplay(&lcd);
+    HAL_Delay(5);
+    LCD_SetLocation(&lcd, 0, 0);
     LCD_WriteString(&lcd, "Initializing...");
+    HAL_Delay(500);
+    LCD_SetLocation(&lcd, 0, 1);
+    for(uint8_t i = 0; i < 16; i++) {
+        // Write blocks
+        LCD_WaitForBusyFlag(&lcd);
+	    LCD_WriteDATA(&lcd, (uint8_t) 1);
+        HAL_Delay(50);
+    }
+    HAL_Delay(200);
+    LCD_ClearDisplay(&lcd);
+    HAL_Delay(5);
+
+    #ifdef CAL_NUNCHUCK
+    while(1) {
+      Nunchuck_Read();
+      LCD_SetLocation(&lcd, 0, 0);
+      LCD_WriteString(&lcd, "X: ");
+      LCD_WriteFloat(&lcd,nunchuck_data[0], 1);
+      LCD_SetLocation(&lcd, 0, 1);
+      LCD_WriteString(&lcd, "Y: ");
+      LCD_WriteFloat(&lcd,nunchuck_data[1], 1);
+
+      button1 = (uint8_t)nunchuck_data[5] & 1;
+      button2 = (uint8_t)(nunchuck_data[5] >> 1) & 1;
+
+      LCD_SetLocation(&lcd, 15, 0);
+      if (button1)
+        LCD_WriteString(&lcd, "B");
+      else
+        LCD_WriteString(&lcd, " ");
+      LCD_SetLocation(&lcd, 15, 1);
+      if (button2)
+        LCD_WriteString(&lcd, "B");
+      else
+        LCD_WriteString(&lcd, " ");
+      HAL_Delay(50);
+    }    
+    #endif
+
+    #ifdef CAL_BATT
+    while(1) {
+      LCD_SetLocation(&lcd, 0, 0);
+      LCD_WriteString(&lcd, "Batt ADC: ");
+      LCD_WriteFloat(&lcd, (int)adc_buffer.batt1, 0);
+
+      LCD_SetLocation(&lcd, 0, 1);
+      LCD_WriteString(&lcd, "Volt: ");
+      LCD_WriteFloat(&lcd, (int)(batteryVoltage * 100.0f), 0);
+      HAL_Delay(50);
+    }
+    #endif
   #endif
 
   float board_temp_adc_filtered = (float)adc_buffer.temp;
@@ -192,8 +278,9 @@ int main(void) {
 
     #ifdef CONTROL_NUNCHUCK
       Nunchuck_Read();
-      cmd1 = CLAMP((nunchuck_data[0] - 127) * 8, -1000, 1000); // x - axis. Nunchuck joystick readings range 30 - 230
-      cmd2 = CLAMP((nunchuck_data[1] - 128) * 8, -1000, 1000); // y - axis
+
+      cmd1 = CLAMP((nunchuck_data[0] - (uint8_t) nunchuck_bias_x) * 8, -1000, 1000); // x - axis. Set nunchuck range in config.h
+      cmd2 = CLAMP((nunchuck_data[1] - (uint8_t) nunchuck_bias_y) * 8, -1000, 1000); // y - axis
 
       button1 = (uint8_t)nunchuck_data[5] & 1;
       button2 = (uint8_t)(nunchuck_data[5] >> 1) & 1;
@@ -242,6 +329,38 @@ int main(void) {
     speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * STEER_COEFFICIENT, -1000, 1000);
     speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * STEER_COEFFICIENT, -1000, 1000);
 
+
+    #ifdef DEBUG_I2C_LCD // TODO: Move to main_loop_counter % 25
+      LCD_SetLocation(&lcd, 0, 0);
+      // speedR and speedL -1000 to 1000
+      LCD_WriteFloat(&lcd, (double) (speedL/100), 0);
+      LCD_WriteString(&lcd, "/");
+      LCD_WriteFloat(&lcd, (double) (speedR/100), 0);
+
+      float battLow = (float)BAT_LOW_LVL2 * (float)BAT_NUMBER_OF_CELLS;
+      float battPercent = 100.0 * (batteryVoltage - battLow) / (42.0 - battLow);
+      if (battPercent > 100.0)
+        battPercent = 100.0;
+      if (battPercent < 0.0)
+        battPercent = 0.0;
+      if (battPercent < 100.0)
+        LCD_SetLocation(&lcd, 12, 0);
+      else
+        LCD_SetLocation(&lcd, 11, 0);
+      LCD_WaitForBusyFlag(&lcd);
+	  LCD_WriteDATA(&lcd, (uint8_t) 2); // Battery icon
+      LCD_WriteFloat(&lcd, battPercent, 0);
+      LCD_WriteString(&lcd, "%");
+      
+
+      LCD_SetLocation(&lcd, 0, 1);
+      for(uint32_t i = 0; i <= (abs(speed)/62) && abs(speed) > 20; i++) {
+        // Write blocks
+        LCD_WaitForBusyFlag(&lcd);
+	    LCD_WriteDATA(&lcd, (uint8_t) 1);
+      }
+
+    #endif
 
     #ifdef ADDITIONAL_CODE
       ADDITIONAL_CODE;
@@ -303,9 +422,20 @@ int main(void) {
     } else if (batteryVoltage < ((float)BAT_LOW_LVL1 * (float)BAT_NUMBER_OF_CELLS) && batteryVoltage > ((float)BAT_LOW_LVL2 * (float)BAT_NUMBER_OF_CELLS) && BAT_LOW_LVL1_ENABLE) {  // low bat 1: slow beep
       buzzerFreq = 5;
       buzzerPattern = 42;
-    } else if (batteryVoltage < ((float)BAT_LOW_LVL2 * (float)BAT_NUMBER_OF_CELLS) && batteryVoltage > ((float)BAT_LOW_DEAD * (float)BAT_NUMBER_OF_CELLS) && BAT_LOW_LVL2_ENABLE) {  // low bat 2: fast beep
-      buzzerFreq = 5;
-      buzzerPattern = 6;
+    } else if (batteryVoltage < ((float)BAT_LOW_LVL2 * (float)BAT_NUMBER_OF_CELLS) && batteryVoltage > ((float)BAT_LOW_DEAD * (float)BAT_NUMBER_OF_CELLS)) {  // low bat 2: fast beep
+      #ifdef DEBUG_I2C_LCD
+          // LCD Message
+          LCD_ClearDisplay(&lcd);
+          HAL_Delay(5);
+          LCD_SetLocation(&lcd, 0, 0);
+          LCD_WriteString(&lcd, "  BATTERY DEAD  ");
+          LCD_SetLocation(&lcd, 0, 1);
+          LCD_WriteString(&lcd, "  CHARGE NOW!!  ");
+      #endif
+      if (BAT_LOW_LVL2_ENABLE) {
+        buzzerFreq = 5;
+        buzzerPattern = 6;
+      }
     } else if (BEEPS_BACKWARD && speed < -50) {  // backward beep
       buzzerFreq = 5;
       buzzerPattern = 1;
