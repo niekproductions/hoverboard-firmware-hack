@@ -171,38 +171,39 @@ int main(void) {
     I2C_Init();
     HAL_Delay(50);
     lcd.pcf8574.PCF_I2C_ADDRESS = 0x20;
-      lcd.pcf8574.PCF_I2C_TIMEOUT = 5;
-      lcd.pcf8574.i2c = hi2c2;
-      lcd.NUMBER_OF_LINES = NUMBER_OF_LINES_2;
-      lcd.type = TYPE0;
+    lcd.pcf8574.PCF_I2C_TIMEOUT = 5;
+    lcd.pcf8574.i2c = hi2c2;
+    lcd.NUMBER_OF_LINES = NUMBER_OF_LINES_2;
+    lcd.type = TYPE0;
 
-      uint8_t fullChar[8] = {
-	    0b11111,
-	    0b11111,
-	    0b11111,
-	    0b11111,
-	    0b11111,
-	    0b11111,
-	    0b11111,
-	    0b11111
-      };  
+    if(LCD_Init(&lcd)!=LCD_OK){
+        // error occured
+        //TODO while(1);
+    }
 
-      uint8_t battChar[8] = {
-	    0b01110,
-	    0b11011,
-	    0b10001,
-	    0b11111,
-	    0b11111,
-	    0b11111,
-	    0b11111,
-	    0b11111
-      };    
+    uint8_t fullChar[8] = {
+	  0b11111,
+	  0b11111,
+	  0b11111,
+	  0b11111,
+	  0b11111,
+	  0b11111,
+	  0b11111,
+      0b11111
+    };  
 
-      if(LCD_Init(&lcd)!=LCD_OK){
-          // error occured
-          //TODO while(1);
-      }
+     uint8_t battChar[8] = {
+	  0b01110,
+	  0b11011,
+	  0b10001,
+	  0b11111,
+	  0b11111,
+	  0b11111,
+	  0b11111,
+	  0b11111
+    };    
 
+    // Add custom characters to display memory
     LCD_CustomChar(&lcd, fullChar, 1);
     LCD_CustomChar(&lcd, battChar, 2);
 
@@ -408,8 +409,7 @@ int main(void) {
               else
                 LCD_SetLocation(&lcd, 11, 0);
 
-              LCD_WaitForBusyFlag(&lcd);
-	          LCD_WriteDATA(&lcd, (uint8_t) 2); // Battery icon
+              LCD_WriteString(&lcd, "\x02"); // Battery icon
               LCD_WriteFloat(&lcd, battPercent, 0);
               LCD_WriteString(&lcd, "%");
               
@@ -419,16 +419,15 @@ int main(void) {
               if (abs(speed) <= 20)
                 numBlocks = 0;
 
+              char speedString[17] = "                ";
               for (uint8_t i = 0; i < numBlocks; i++) { // Write blocks
-                LCD_WriteString(&lcd, "\x01");
+                speedString[i] = (uint8_t) 1; // █
               }
-              for (uint8_t i = numBlocks; i < 16; i++) { // Fill rest with spaces
-                LCD_WriteString(&lcd, " ");
-              }
+              LCD_WriteString(&lcd, speedString);
           } else {
               // Low battery warning
               LCD_SetLocation(&lcd, 0, 0);
-              LCD_WriteString(&lcd, " \x02BATTERY DEAD\x02  ");
+              LCD_WriteString(&lcd, "  " "\x02" "BATTERY DEAD" "\x02" "  ");
               LCD_SetLocation(&lcd, 0, 1);
               LCD_WriteString(&lcd, "  CHARGE NOW!!  ");
           }
