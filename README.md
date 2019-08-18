@@ -1,3 +1,18 @@
+# My changes
+Fork of NiklasFauth's original project, mainly focused on adding LCD support with nunchuck control.
+
+Improvements include:
+* I2C LCD support with speed/battery charge
+* LCD support for battery / nunchuck calibration
+* LCD dead battery warning
+* Nunchuck button functions:
+    * Trigger to sound a horn
+    * Top button when standing still to reverse driving direction
+
+Still to come:
+* Reduced steering at higher speeds (increased stability)
+* Better nunchuck safety
+
 # hoverboard-firmware-hack
 
 ![](https://raw.githubusercontent.com/NiklasFauth/hoverboard-firmware-hack/master/docs/pictures/armchair.gif)   ![](https://raw.githubusercontent.com/NiklasFauth/hoverboard-firmware-hack/master/docs/pictures/bobbycar.gif)

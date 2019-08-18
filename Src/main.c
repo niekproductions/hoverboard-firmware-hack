@@ -77,6 +77,9 @@ int32_t motor_test_direction = 1;
 extern uint8_t nunchuck_data[6];
 uint32_t nunchuck_bias_x;
 uint32_t nunchuck_bias_y;
+
+bool doReverse = false;
+
 #ifdef CONTROL_PPM
 extern volatile uint16_t ppm_captured_value[PPM_NUM_CHANNELS+1];
 #endif
@@ -149,7 +152,6 @@ int main(void) {
 
   int lastSpeedL = 0, lastSpeedR = 0;
   int speedL = 0, speedR = 0;
-  float direction = 1;
 
   #ifdef CONTROL_PPM
     PPM_Init();
@@ -201,11 +203,35 @@ int main(void) {
 	  0b11111,
 	  0b11111,
 	  0b11111
-    };    
+    };  
+
+    uint8_t forwardChar[8] = {
+	  0b00100,
+	  0b01110,
+	  0b10101,
+	  0b00100,
+	  0b00100,
+	  0b00100,
+	  0b00100,
+	  0b00000
+    };  
+
+    uint8_t reverseChar[8] = {
+	  0b00100,
+	  0b00100,
+	  0b00100,
+	  0b00100,
+	  0b10101,
+	  0b01110,
+	  0b00100,
+	  0b00000
+    };
 
     // Add custom characters to display memory
     LCD_CustomChar(&lcd, fullChar, 1);
     LCD_CustomChar(&lcd, battChar, 2);
+    LCD_CustomChar(&lcd, forwardChar, 3);
+    LCD_CustomChar(&lcd, reverseChar, 4);
 
     LCD_ClearDisplay(&lcd);
     HAL_Delay(5);
@@ -288,6 +314,48 @@ int main(void) {
 
       button1 = (uint8_t)nunchuck_data[5] & 1;
       button2 = (uint8_t)(nunchuck_data[5] >> 1) & 1;
+      static uint8_t lastButton1 = 1;
+
+      if (!button1) { // Bottom trigger pressed, sound horn
+        buzzerPattern = 0;
+        buzzerFreq = 7; // Enable buzzer, higher number = lower frequency
+      } else if (!lastButton1) {
+        buzzerFreq = 0; // Disable buzzer
+      }
+      lastButton1 = button1;
+
+      if (!button2) { // Top button pressed, reverse direction
+        buzzerPattern = 0;
+        if (abs(speed) > 20) { // Still driving, warn user
+            buzzerFreq = 5;
+            HAL_Delay(100);
+            buzzerFreq = 0;
+        } else {
+            doReverse = !doReverse;
+
+            if(!doReverse) {
+                #ifdef DEBUG_I2C_LCD
+                LCD_SetLocation(&lcd, 15, 1);
+                LCD_WriteString(&lcd, "\x03"); // Forward arrow
+                #endif
+                buzzerFreq = 5;
+                HAL_Delay(400);
+                buzzerFreq = 0;
+            } else {
+                #ifdef DEBUG_I2C_LCD
+                LCD_SetLocation(&lcd, 15, 1);
+                LCD_WriteString(&lcd, "\x04"); // Reverse arrow
+                #endif
+                buzzerFreq = 5;
+                HAL_Delay(400);
+                buzzerFreq = 0;
+                HAL_Delay(400);
+                buzzerFreq = 5;
+                HAL_Delay(400);
+                buzzerFreq = 0;
+            }
+        }
+      }
     #endif
 
     #ifdef CONTROL_PPM
@@ -324,14 +392,21 @@ int main(void) {
       timeout = 0;
     #endif
 
+    // TODO: reduce steering when speed goes up
+
     // ####### LOW-PASS FILTER #######
     steer = steer * (1.0 - FILTER) + cmd1 * FILTER;
     speed = speed * (1.0 - FILTER) + cmd2 * FILTER;
 
 
     // ####### MIXER #######
-    speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * STEER_COEFFICIENT, -1000, 1000);
-    speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * STEER_COEFFICIENT, -1000, 1000);
+    if (!doReverse) {
+        speedR = CLAMP(speed * SPEED_COEFFICIENT -  steer * STEER_COEFFICIENT, -1000, 1000);
+        speedL = CLAMP(speed * SPEED_COEFFICIENT +  steer * STEER_COEFFICIENT, -1000, 1000);
+    } else {
+        speedR = CLAMP(-speed * SPEED_COEFFICIENT +  steer * STEER_COEFFICIENT, -1000, 1000);
+        speedL = CLAMP(-speed * SPEED_COEFFICIENT -  steer * STEER_COEFFICIENT, -1000, 1000);
+    }
 
 
     #ifdef ADDITIONAL_CODE
@@ -420,6 +495,11 @@ int main(void) {
                 numBlocks = 0;
 
               char speedString[17] = "                ";
+              if (!doReverse)
+                speedString[15] = (uint8_t) 3; // Forward arrow
+              else
+                speedString[15] = (uint8_t) 4; // Reverse arrow
+
               for (uint8_t i = 0; i < numBlocks; i++) { // Write blocks
                 speedString[i] = (uint8_t) 1; // █
               }
